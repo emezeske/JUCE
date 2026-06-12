@@ -1902,19 +1902,29 @@ std::optional<unsigned long> XWindowSystem::setBounds (::Window windowH, Rectang
             }
         }
 
+        {
+            XWindowSystemUtilities::ScopedXLock xLock;
+
+            if (auto hints = makeXFreePtr (X11Symbols::getInstance()->xAllocSizeHints()))
+            {
+                hints->flags  = USSize | USPosition;
+                hints->x      = newBounds.getX();
+                hints->y      = newBounds.getY();
+                hints->width  = newBounds.getWidth();
+                hints->height = newBounds.getHeight();
+                X11Symbols::getInstance()->xSetWMNormalHints (display, windowH, hints.get());
+            }
+        }
+
+        // The constraints must be written after the USSize/USPosition hints:
+        // XSetWMNormalHints replaces the whole property, so the reverse order
+        // erases the PMinSize/PMaxSize fields on every setBounds, leaving the
+        // window manager free to resize the window below its minimum size.
+        // updateConstraints takes its own X lock, so the lock above is scoped
+        // to the hints write and re-acquired here for the move below.
         updateConstraints (windowH, *peer);
 
         XWindowSystemUtilities::ScopedXLock xLock;
-
-        if (auto hints = makeXFreePtr (X11Symbols::getInstance()->xAllocSizeHints()))
-        {
-            hints->flags  = USSize | USPosition;
-            hints->x      = newBounds.getX();
-            hints->y      = newBounds.getY();
-            hints->width  = newBounds.getWidth();
-            hints->height = newBounds.getHeight();
-            X11Symbols::getInstance()->xSetWMNormalHints (display, windowH, hints.get());
-        }
 
         const auto nativeWindowBorder = std::invoke ([&]() -> BorderSize<int>
         {
@@ -2029,10 +2039,22 @@ void XWindowSystem::updateConstraints (::Window windowH, ComponentPeer& peer) co
             const auto factor       = peer.getPlatformScaleFactor();
             const auto leftAndRight = windowBorder.getLeftAndRight();
             const auto topAndBottom = windowBorder.getTopAndBottom();
-            hints->min_width  = jmax (1, (int) (factor * c->getMinimumWidth())  - leftAndRight);
-            hints->max_width  = jmax (1, (int) (factor * c->getMaximumWidth())  - leftAndRight);
-            hints->min_height = jmax (1, (int) (factor * c->getMinimumHeight()) - topAndBottom);
-            hints->max_height = jmax (1, (int) (factor * c->getMaximumHeight()) - topAndBottom);
+
+            // Constrainers commonly use the maximum int value to mean
+            // "unbounded", so the scaled limit must be clamped before the
+            // conversion back to int: for scale factors greater than 1.0 the
+            // conversion is otherwise undefined behaviour, and the garbage
+            // maximum sizes it produced made some window managers pin the
+            // window to its minimum size on scaled displays.
+            const auto scaledLimit = [factor] (int limit, int border)
+            {
+                const auto scaled = jmin ((double) std::numeric_limits<int>::max(), factor * limit);
+                return jmax (1, (int) scaled - border);
+            };
+            hints->min_width  = scaledLimit (c->getMinimumWidth(),  leftAndRight);
+            hints->max_width  = scaledLimit (c->getMaximumWidth(),  leftAndRight);
+            hints->min_height = scaledLimit (c->getMinimumHeight(), topAndBottom);
+            hints->max_height = scaledLimit (c->getMaximumHeight(), topAndBottom);
             hints->flags = PMinSize | PMaxSize;
         }
 
