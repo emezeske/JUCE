@@ -253,7 +253,9 @@ void AudioProcessorPlayer::audioDeviceIOCallbackWithContext (const float* const*
     const auto totalNumChannels = jmax (actualProcessorChannels.ins, actualProcessorChannels.outs);
     AudioBuffer<float> buffer (channels.data(), (int) totalNumChannels, numSamples);
 
-    if (processor != nullptr)
+    // A device restart can deliver a trailing callback after audioDeviceStopped()
+    // has cleared currentDevice while processor is still set, so guard both.
+    if (processor != nullptr && currentDevice != nullptr)
     {
         const ScopedLock sl2 (processor->getCallbackLock());
 
