@@ -76,6 +76,16 @@ static bool canBeTriggered (const Item& item) noexcept
         && (item.customComponent == nullptr || item.customComponent->isTriggeredAutomatically());
 }
 
+static bool canBeActivatedByKeyboard (const Item& item) noexcept
+{
+    // Unlike canBeTriggered, this includes custom components that aren't triggered
+    // automatically: they handle their own mouse clicks, but should still be
+    // possible to highlight and activate with the keyboard.
+    return item.isEnabled
+        && item.itemID != 0
+        && ! item.isSectionHeader;
+}
+
 static bool hasActiveSubMenu (const Item& item) noexcept
 {
     return item.isEnabled
@@ -693,7 +703,8 @@ struct MenuWindow final : public Component
         }
         else if (key.isKeyCode (KeyPress::returnKey) || key.isKeyCode (KeyPress::spaceKey))
         {
-            triggerCurrentlyHighlightedItem();
+            if (currentChild != nullptr && canBeActivatedByKeyboard (currentChild->item))
+                dismissMenu (&currentChild->item);
         }
         else if (key.isKeyCode (KeyPress::escapeKey))
         {
@@ -1353,7 +1364,7 @@ struct MenuWindow final : public Component
 
             if (auto* mic = items.getUnchecked ((start + items.size()) % items.size()))
             {
-                if (canBeTriggered (mic->item) || hasActiveSubMenu (mic->item))
+                if (canBeActivatedByKeyboard (mic->item) || hasActiveSubMenu (mic->item))
                 {
                     setCurrentlyHighlightedChild (mic);
                     return;
